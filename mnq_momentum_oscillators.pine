@@ -1,0 +1,169 @@
+//@version=5
+indicator("MNQ Momentum Oscillators", shorttitle="MNQ_MOMENTUM", overlay=false)
+
+// === INPUTS ===
+// RSI Settings
+rsi_length = input.int(14, "RSI Period", minval=1, maxval=50, group="RSI")
+rsi_ma_length = input.int(14, "RSI MA Length", minval=1, maxval=50, group="RSI")
+rsi_oversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="RSI")
+rsi_overbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="RSI")
+
+// Stochastic Settings
+stoch_k = input.int(14, "Stochastic %K", minval=1, maxval=50, group="Stochastic")
+stoch_d = input.int(3, "Stochastic %D", minval=1, maxval=10, group="Stochastic")
+stoch_smooth = input.int(3, "Stochastic Smooth", minval=1, maxval=10, group="Stochastic")
+stoch_oversold = input.int(20, "Stoch Oversold", minval=10, maxval=30, group="Stochastic")
+stoch_overbought = input.int(80, "Stoch Overbought", minval=70, maxval=90, group="Stochastic")
+
+// MACD Settings
+macd_fast = input.int(12, "MACD Fast", minval=1, maxval=50, group="MACD")
+macd_slow = input.int(26, "MACD Slow", minval=1, maxval=100, group="MACD")
+macd_signal = input.int(9, "MACD Signal", minval=1, maxval=50, group="MACD")
+
+// Williams %R Settings
+williams_length = input.int(14, "Williams %R Length", minval=1, maxval=50, group="Williams %R")
+
+// Display Options
+show_rsi = input.bool(true, "Show RSI", group="Display")
+show_stoch = input.bool(true, "Show Stochastic", group="Display")
+show_macd = input.bool(true, "Show MACD", group="Display")
+show_williams = input.bool(true, "Show Williams %R", group="Display")
+
+// === CALCULATIONS ===
+// RSI
+rsi = ta.rsi(close, rsi_length)
+rsi_ma = ta.sma(rsi, rsi_ma_length)
+
+// Stochastic
+stoch_k_val = ta.stoch(close, high, low, stoch_k)
+stoch_d_val = ta.sma(stoch_k_val, stoch_d)
+
+// MACD
+[macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Williams %R
+williams_r = ta.wpr(williams_length)
+
+// === SIGNAL DETECTION ===
+// RSI Signals
+rsi_bullish_div = rsi[1] < rsi[2] and rsi > rsi[1] and close < close[2] and rsi < rsi_oversold
+rsi_bearish_div = rsi[1] > rsi[2] and rsi < rsi[1] and close > close[2] and rsi > rsi_overbought
+rsi_oversold_bounce = rsi < rsi_oversold and rsi > rsi[1]
+rsi_overbought_drop = rsi > rsi_overbought and rsi < rsi[1]
+
+// Stochastic Signals
+stoch_oversold_cross = ta.crossover(stoch_k_val, stoch_oversold) and stoch_k_val < stoch_oversold
+stoch_overbought_cross = ta.crossunder(stoch_k_val, stoch_overbought) and stoch_k_val > stoch_overbought
+stoch_bullish = ta.crossover(stoch_k_val, stoch_d_val) and stoch_k_val < 50
+stoch_bearish = ta.crossunder(stoch_k_val, stoch_d_val) and stoch_k_val > 50
+
+// MACD Signals
+macd_bullish = ta.crossover(macd_line, signal_line)
+macd_bearish = ta.crossunder(macd_line, signal_line)
+macd_zero_cross_up = ta.crossover(macd_line, 0)
+macd_zero_cross_down = ta.crossunder(macd_line, 0)
+
+// Williams %R Signals
+williams_oversold = williams_r < -80
+williams_overbought = williams_r > -20
+williams_bullish = ta.crossover(williams_r, -80)
+williams_bearish = ta.crossunder(williams_r, -20)
+
+// === COMPOSITE SIGNALS ===
+// Multiple oscillator confluence
+bullish_confluence = (rsi_oversold_bounce or rsi_bullish_div) and 
+                    (stoch_bullish or stoch_oversold_cross) and 
+                    williams_bullish
+                    
+bearish_confluence = (rsi_overbought_drop or rsi_bearish_div) and 
+                    (stoch_bearish or stoch_overbought_cross) and 
+                    williams_bearish
+
+// === PLOTS ===
+// Create subplots for different oscillators
+// RSI Plot
+if show_rsi
+    rsi_plot = plot(rsi, "RSI", color=color.purple, linewidth=2)
+    rsi_ma_plot = plot(rsi_ma, "RSI MA", color=color.yellow, linewidth=1)
+    hline(rsi_overbought, "RSI Overbought", color=color.red, linestyle=hline.style_dashed)
+    hline(rsi_oversold, "RSI Oversold", color=color.green, linestyle=hline.style_dashed)
+    hline(50, "RSI Midline", color=color.gray, linestyle=hline.style_dotted)
+
+// Stochastic Plot (scaled to 0-100 like RSI)
+if show_stoch
+    plot(stoch_k_val, "Stoch %K", color=color.blue, linewidth=2)
+    plot(stoch_d_val, "Stoch %D", color=color.red, linewidth=1)
+
+// MACD Plot (in separate subplot)
+if show_macd
+    plot(macd_line, "MACD", color=color.blue, linewidth=2)
+    plot(signal_line, "Signal", color=color.red, linewidth=1)
+    plot(hist, "Histogram", color=color.gray, style=plot.style_histogram)
+    hline(0, "MACD Zero", color=color.gray, linestyle=hline.style_solid)
+
+// Williams %R (scaled to 0-100)
+if show_williams
+    williams_scaled = (williams_r + 100)
+    plot(williams_scaled, "Williams %R", color=color.orange, linewidth=2)
+
+// === SIGNAL MARKERS ===
+plotshape(bullish_confluence, "Bullish Confluence", shape.triangleup, location.bottom, color.green, size=size.normal)
+plotshape(bearish_confluence, "Bearish Confluence", shape.triangledown, location.top, color.red, size=size.normal)
+
+plotchar(rsi_bullish_div, "RSI Bull Div", "D", location.bottom, color.lime, size=size.small)
+plotchar(rsi_bearish_div, "RSI Bear Div", "D", location.top, color.maroon, size=size.small)
+
+plotchar(macd_bullish, "MACD Bull", "▲", location.bottom, color.blue, size=size.tiny)
+plotchar(macd_bearish, "MACD Bear", "▼", location.top, color.blue, size=size.tiny)
+
+// === BACKGROUND CONDITIONS ===
+bgcolor(bullish_confluence ? color.new(color.green, 90) : bearish_confluence ? color.new(color.red, 90) : na)
+
+// === INFORMATION TABLE ===
+if barstate.islast
+    var table momentum_table = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1)
+    table.cell(momentum_table, 0, 0, "Momentum Analysis", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    table.cell(momentum_table, 1, 0, "Value", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    
+    table.cell(momentum_table, 0, 1, "RSI", text_color=color.black, text_size=size.small)
+    rsi_color = rsi > rsi_overbought ? color.red : rsi < rsi_oversold ? color.green : color.black
+    table.cell(momentum_table, 1, 1, str.tostring(math.round(rsi, 1)), text_color=rsi_color, text_size=size.small)
+    
+    table.cell(momentum_table, 0, 2, "Stoch %K", text_color=color.black, text_size=size.small)
+    stoch_color = stoch_k_val > stoch_overbought ? color.red : stoch_k_val < stoch_oversold ? color.green : color.black
+    table.cell(momentum_table, 1, 2, str.tostring(math.round(stoch_k_val, 1)), text_color=stoch_color, text_size=size.small)
+    
+    table.cell(momentum_table, 0, 3, "MACD", text_color=color.black, text_size=size.small)
+    macd_color = macd_line > signal_line ? color.green : color.red
+    table.cell(momentum_table, 1, 3, str.tostring(math.round(macd_line, 3)), text_color=macd_color, text_size=size.small)
+    
+    table.cell(momentum_table, 0, 4, "Williams %R", text_color=color.black, text_size=size.small)
+    williams_color = williams_r > -20 ? color.red : williams_r < -80 ? color.green : color.black
+    table.cell(momentum_table, 1, 4, str.tostring(math.round(williams_r, 1)), text_color=williams_color, text_size=size.small)
+    
+    table.cell(momentum_table, 0, 5, "Status", text_color=color.black, text_size=size.small)
+    momentum_status = bullish_confluence ? "BULLISH" : bearish_confluence ? "BEARISH" : "NEUTRAL"
+    status_color = bullish_confluence ? color.green : bearish_confluence ? color.red : color.gray
+    table.cell(momentum_table, 1, 5, momentum_status, text_color=status_color, text_size=size.small)
+    
+    // Divergence status
+    table.cell(momentum_table, 0, 6, "RSI Divergence", text_color=color.black, text_size=size.small)
+    div_status = rsi_bullish_div ? "BULL DIV" : rsi_bearish_div ? "BEAR DIV" : "NONE"
+    div_color = rsi_bullish_div ? color.green : rsi_bearish_div ? color.red : color.gray
+    table.cell(momentum_table, 1, 6, div_status, text_color=div_color, text_size=size.small)
+    
+    // Confluence strength
+    table.cell(momentum_table, 0, 7, "Confluence", text_color=color.black, text_size=size.small)
+    confluence_strength = (rsi_oversold_bounce or rsi_overbought_drop ? 1 : 0) + 
+                         (stoch_bullish or stoch_bearish ? 1 : 0) + 
+                         (macd_bullish or macd_bearish ? 1 : 0) + 
+                         (williams_bullish or williams_bearish ? 1 : 0)
+    table.cell(momentum_table, 1, 7, str.tostring(confluence_strength) + "/4", text_color=color.black, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(bullish_confluence, title="MNQ Bullish Momentum", message="Confluence bullish détectée sur MNQ - Momentum haussier fort")
+alertcondition(bearish_confluence, title="MNQ Bearish Momentum", message="Confluence bearish détectée sur MNQ - Momentum baissier fort")
+alertcondition(rsi_bullish_div, title="MNQ RSI Bull Divergence", message="Divergence bullish RSI détectée sur MNQ")
+alertcondition(rsi_bearish_div, title="MNQ RSI Bear Divergence", message="Divergence bearish RSI détectée sur MNQ")
+alertcondition(macd_zero_cross_up, title="MNQ MACD Zero Cross Up", message="MACD croise à la hausse la ligne zéro sur MNQ")
+alertcondition(macd_zero_cross_down, title="MNQ MACD Zero Cross Down", message="MACD croise à la baisse la ligne zéro sur MNQ")

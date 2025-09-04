@@ -1,0 +1,218 @@
+//@version=5
+indicator("MNQ Volume Analysis", shorttitle="MNQ_VOLUME", overlay=false)
+
+// === INPUTS ===
+// Volume Moving Averages
+volume_ma_type = input.string("SMA", "Volume MA Type", options=["SMA", "EMA"], group="Volume MA")
+volume_ma_fast = input.int(10, "Volume MA Fast", minval=1, maxval=100, group="Volume MA")
+volume_ma_slow = input.int(30, "Volume MA Slow", minval=1, maxval=200, group="Volume MA")
+
+// Volume Analysis
+volume_spike_threshold = input.float(2.0, "Volume Spike Threshold", minval=1.0, maxval=5.0, step=0.1, group="Volume Analysis")
+high_volume_threshold = input.float(1.5, "High Volume Threshold", minval=1.0, maxval=3.0, step=0.1, group="Volume Analysis")
+accumulation_periods = input.int(20, "Accumulation Periods", minval=5, maxval=100, group="Volume Analysis")
+
+// VWAP Settings
+vwap_anchored = input.bool(false, "Anchored VWAP", group="VWAP")
+vwap_anchor_time = input.time(timestamp("01 Jan 2024 09:30 +0000"), "VWAP Anchor Time", group="VWAP")
+show_vwap_bands = input.bool(true, "Show VWAP Bands", group="VWAP")
+vwap_std_dev = input.float(2.0, "VWAP Std Dev", minval=0.5, maxval=3.0, step=0.1, group="VWAP")
+
+// On Balance Volume
+obv_ma_length = input.int(21, "OBV MA Length", minval=1, maxval=100, group="OBV")
+
+// Volume Profile
+vp_periods = input.int(100, "Volume Profile Periods", minval=50, maxval=500, group="Volume Profile")
+
+// Display Options
+show_volume_bars = input.bool(true, "Show Volume Bars", group="Display")
+show_volume_ma = input.bool(true, "Show Volume MA", group="Display")
+show_obv = input.bool(true, "Show OBV", group="Display")
+show_vwap = input.bool(true, "Show VWAP", group="Display")
+
+// === FUNCTIONS ===
+get_volume_ma(volume_data, length, ma_type) =>
+    switch ma_type
+        "SMA" => ta.sma(volume_data, length)
+        "EMA" => ta.ema(volume_data, length)
+        => ta.sma(volume_data, length)
+
+// === CALCULATIONS ===
+// Volume Moving Averages
+volume_ma_fast_val = get_volume_ma(volume, volume_ma_fast, volume_ma_type)
+volume_ma_slow_val = get_volume_ma(volume, volume_ma_slow, volume_ma_type)
+
+// Volume Analysis
+volume_spike = volume > volume_ma_slow_val * volume_spike_threshold
+high_volume = volume > volume_ma_slow_val * high_volume_threshold
+low_volume = volume < volume_ma_slow_val * 0.8
+
+// Volume Trend
+volume_increasing = volume_ma_fast_val > volume_ma_slow_val
+volume_decreasing = volume_ma_fast_val < volume_ma_slow_val
+
+// VWAP Calculations
+vwap_source = hlc3
+vwap_volume = volume
+var float vwap_sum_pv = 0.0
+var float vwap_sum_v = 0.0
+var float vwap_sum_pv2 = 0.0
+
+if vwap_anchored and time >= vwap_anchor_time or not vwap_anchored
+    vwap_sum_pv := na(vwap_sum_pv[1]) ? vwap_source * vwap_volume : vwap_sum_pv[1] + vwap_source * vwap_volume
+    vwap_sum_v := na(vwap_sum_v[1]) ? vwap_volume : vwap_sum_v[1] + vwap_volume
+    vwap_sum_pv2 := na(vwap_sum_pv2[1]) ? vwap_source * vwap_source * vwap_volume : vwap_sum_pv2[1] + vwap_source * vwap_source * vwap_volume
+else if not vwap_anchored
+    vwap_sum_pv := vwap_source * vwap_volume
+    vwap_sum_v := vwap_volume
+    vwap_sum_pv2 := vwap_source * vwap_source * vwap_volume
+
+vwap_val = vwap_sum_pv / vwap_sum_v
+vwap_variance = (vwap_sum_pv2 / vwap_sum_v) - (vwap_val * vwap_val)
+vwap_std = math.sqrt(math.max(vwap_variance, 0))
+
+vwap_upper = vwap_val + vwap_std * vwap_std_dev
+vwap_lower = vwap_val - vwap_std * vwap_std_dev
+
+// On Balance Volume
+obv = ta.obv
+obv_ma = ta.sma(obv, obv_ma_length)
+obv_bullish = obv > obv_ma
+obv_bearish = obv < obv_ma
+
+// Volume-Price Relationship
+price_up = close > close[1]
+price_down = close < close[1]
+volume_confirmation = (price_up and high_volume) or (price_down and high_volume)
+volume_divergence = (price_up and low_volume) or (price_down and low_volume)
+
+// Accumulation/Distribution
+acc_dist = ta.accdist
+acc_dist_ma = ta.sma(acc_dist, accumulation_periods)
+accumulation = acc_dist > acc_dist_ma
+distribution = acc_dist < acc_dist_ma
+
+// Volume Weighted Price Change
+vwpc = (close - close[1]) * volume
+vwpc_ma = ta.sma(vwpc, 20)
+
+// === SIGNALS ===
+// Volume Breakout Signals
+volume_breakout_bullish = volume_spike and price_up and volume > volume[1]
+volume_breakout_bearish = volume_spike and price_down and volume > volume[1]
+
+// Volume Exhaustion
+buying_exhaustion = high_volume and price_up and close < (high + low) / 2
+selling_exhaustion = high_volume and price_down and close > (high + low) / 2
+
+// Volume Confirmation Signals
+strong_move_up = price_up and high_volume and obv_bullish
+strong_move_down = price_down and high_volume and obv_bearish
+
+weak_move_up = price_up and low_volume
+weak_move_down = price_down and low_volume
+
+// === PLOTS ===
+// Volume Bars
+if show_volume_bars
+    volume_color = volume_spike ? color.red : high_volume ? color.orange : color.gray
+    plot(volume, "Volume", color=volume_color, style=plot.style_histogram, linewidth=1)
+
+// Volume Moving Averages
+if show_volume_ma
+    plot(volume_ma_fast_val, "Volume MA Fast", color=color.blue, linewidth=2)
+    plot(volume_ma_slow_val, "Volume MA Slow", color=color.red, linewidth=2)
+
+// OBV
+if show_obv
+    plot(ta.scale.none(obv), "OBV", color=color.purple, linewidth=2, display=display.data_window)
+    plot(ta.scale.none(obv_ma), "OBV MA", color=color.yellow, linewidth=1, display=display.data_window)
+
+// Volume Signals
+plotshape(volume_breakout_bullish, "Volume Breakout Bull", shape.triangleup, location.top, color.green, size=size.small)
+plotshape(volume_breakout_bearish, "Volume Breakout Bear", shape.triangledown, location.top, color.red, size=size.small)
+
+plotchar(buying_exhaustion, "Buying Exhaustion", "E", location.top, color.red, size=size.tiny)
+plotchar(selling_exhaustion, "Selling Exhaustion", "E", location.top, color.green, size=size.tiny)
+
+plotchar(strong_move_up, "Strong Up", "▲", location.bottom, color.lime, size=size.tiny)
+plotchar(strong_move_down, "Strong Down", "▼", location.bottom, color.maroon, size=size.tiny)
+
+plotchar(weak_move_up, "Weak Up", "△", location.bottom, color.orange, size=size.tiny)
+plotchar(weak_move_down, "Weak Down", "▽", location.bottom, color.orange, size=size.tiny)
+
+// Background for volume conditions
+bgcolor(volume_spike ? color.new(color.red, 85) : high_volume ? color.new(color.orange, 95) : na)
+
+// === VWAP ON PRICE CHART ===
+if show_vwap
+    // These will be displayed in data window
+    plot(vwap_val, "VWAP", color=color.blue, linewidth=2, display=display.data_window)
+    if show_vwap_bands
+        plot(vwap_upper, "VWAP Upper", color=color.red, linewidth=1, display=display.data_window)
+        plot(vwap_lower, "VWAP Lower", color=color.green, linewidth=1, display=display.data_window)
+
+// === INFORMATION TABLE ===
+if barstate.islast
+    var table volume_table = table.new(position.top_left, 2, 10, bgcolor=color.white, border_width=1)
+    table.cell(volume_table, 0, 0, "Volume Analysis", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    table.cell(volume_table, 1, 0, "Status", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    
+    // Current Volume vs Average
+    volume_ratio = volume / volume_ma_slow_val
+    table.cell(volume_table, 0, 1, "Vol vs Avg", text_color=color.black, text_size=size.small)
+    ratio_color = volume_ratio > volume_spike_threshold ? color.red : volume_ratio > high_volume_threshold ? color.orange : color.black
+    table.cell(volume_table, 1, 1, str.tostring(math.round(volume_ratio, 2)) + "x", text_color=ratio_color, text_size=size.small)
+    
+    // Volume Trend
+    table.cell(volume_table, 0, 2, "Volume Trend", text_color=color.black, text_size=size.small)
+    vol_trend = volume_increasing ? "INCREASING" : volume_decreasing ? "DECREASING" : "STABLE"
+    vol_trend_color = volume_increasing ? color.green : volume_decreasing ? color.red : color.gray
+    table.cell(volume_table, 1, 2, vol_trend, text_color=vol_trend_color, text_size=size.small)
+    
+    // OBV Status
+    table.cell(volume_table, 0, 3, "OBV Status", text_color=color.black, text_size=size.small)
+    obv_status = obv_bullish ? "BULLISH" : "BEARISH"
+    obv_color = obv_bullish ? color.green : color.red
+    table.cell(volume_table, 1, 3, obv_status, text_color=obv_color, text_size=size.small)
+    
+    // Accumulation/Distribution
+    table.cell(volume_table, 0, 4, "Acc/Dist", text_color=color.black, text_size=size.small)
+    acc_dist_status = accumulation ? "ACCUMULATION" : distribution ? "DISTRIBUTION" : "NEUTRAL"
+    acc_dist_color = accumulation ? color.green : distribution ? color.red : color.gray
+    table.cell(volume_table, 1, 4, acc_dist_status, text_color=acc_dist_color, text_size=size.small)
+    
+    // Volume Confirmation
+    table.cell(volume_table, 0, 5, "Price-Vol", text_color=color.black, text_size=size.small)
+    confirmation_status = volume_confirmation ? "CONFIRMED" : volume_divergence ? "DIVERGENT" : "NEUTRAL"
+    confirmation_color = volume_confirmation ? color.green : volume_divergence ? color.red : color.gray
+    table.cell(volume_table, 1, 5, confirmation_status, text_color=confirmation_color, text_size=size.small)
+    
+    // Current Volume
+    table.cell(volume_table, 0, 6, "Current Vol", text_color=color.black, text_size=size.small)
+    table.cell(volume_table, 1, 6, str.tostring(math.round(volume/1000, 0)) + "K", text_color=color.black, text_size=size.small)
+    
+    // Average Volume
+    table.cell(volume_table, 0, 7, "Avg Vol", text_color=color.black, text_size=size.small)
+    table.cell(volume_table, 1, 7, str.tostring(math.round(volume_ma_slow_val/1000, 0)) + "K", text_color=color.black, text_size=size.small)
+    
+    // VWAP Distance
+    table.cell(volume_table, 0, 8, "VWAP Dist", text_color=color.black, text_size=size.small)
+    vwap_distance = ((close - vwap_val) / vwap_val) * 100
+    vwap_dist_color = vwap_distance > 0 ? color.green : color.red
+    table.cell(volume_table, 1, 8, str.tostring(math.round(vwap_distance, 2)) + "%", text_color=vwap_dist_color, text_size=size.small)
+    
+    // Volume Quality
+    table.cell(volume_table, 0, 9, "Vol Quality", text_color=color.black, text_size=size.small)
+    quality = strong_move_up or strong_move_down ? "HIGH" : weak_move_up or weak_move_down ? "LOW" : "NORMAL"
+    quality_color = (strong_move_up or strong_move_down) ? color.green : (weak_move_up or weak_move_down) ? color.red : color.gray
+    table.cell(volume_table, 1, 9, quality, text_color=quality_color, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(volume_breakout_bullish, title="MNQ Volume Breakout Bull", message="Breakout haussier avec fort volume sur MNQ")
+alertcondition(volume_breakout_bearish, title="MNQ Volume Breakout Bear", message="Breakout baissier avec fort volume sur MNQ")
+alertcondition(volume_spike, title="MNQ Volume Spike", message="Pic de volume détecté sur MNQ")
+alertcondition(buying_exhaustion, title="MNQ Buying Exhaustion", message="Épuisement des acheteurs détecté sur MNQ")
+alertcondition(selling_exhaustion, title="MNQ Selling Exhaustion", message="Épuisement des vendeurs détecté sur MNQ")
+alertcondition(ta.crossover(obv, obv_ma), title="MNQ OBV Bull Cross", message="OBV croise à la hausse sa moyenne sur MNQ")
+alertcondition(ta.crossunder(obv, obv_ma), title="MNQ OBV Bear Cross", message="OBV croise à la baisse sa moyenne sur MNQ")

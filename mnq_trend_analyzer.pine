@@ -1,0 +1,108 @@
+//@version=5
+indicator("MNQ Trend Analyzer", shorttitle="MNQ_TREND", overlay=true)
+
+// === INPUTS ===
+// Moving Averages
+ma_type = input.string("EMA", "Type MA", options=["SMA", "EMA", "WMA", "HMA"], group="Moving Averages")
+ma_fast = input.int(9, "MA Rapide", minval=1, maxval=100, group="Moving Averages")
+ma_medium = input.int(21, "MA Medium", minval=1, maxval=200, group="Moving Averages")
+ma_slow = input.int(50, "MA Lente", minval=1, maxval=500, group="Moving Averages")
+
+// Trend Strength
+atr_length = input.int(14, "ATR Length", minval=1, maxval=50, group="Trend Strength")
+adx_length = input.int(14, "ADX Length", minval=1, maxval=50, group="Trend Strength")
+adx_threshold = input.int(25, "ADX Threshold", minval=10, maxval=50, group="Trend Strength")
+
+// Visualization
+show_signals = input.bool(true, "Show Trend Signals", group="Display")
+show_zones = input.bool(true, "Show Trend Zones", group="Display")
+show_ma_cross = input.bool(true, "Show MA Crossover", group="Display")
+
+// === FUNCTIONS ===
+get_ma(source, length, ma_type) =>
+    switch ma_type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "WMA" => ta.wma(source, length)
+        "HMA" => ta.hma(source, length)
+        => ta.ema(source, length)
+
+// === CALCULATIONS ===
+// Moving Averages
+ma_fast_val = get_ma(close, ma_fast, ma_type)
+ma_medium_val = get_ma(close, ma_medium, ma_type)
+ma_slow_val = get_ma(close, ma_slow, ma_type)
+
+// ATR for volatility
+atr = ta.atr(atr_length)
+
+// ADX for trend strength
+[diplus, diminus, adx] = ta.dmi(adx_length, adx_length)
+
+// Trend Direction
+trend_up = ma_fast_val > ma_medium_val and ma_medium_val > ma_slow_val
+trend_down = ma_fast_val < ma_medium_val and ma_medium_val < ma_slow_val
+trend_sideways = not trend_up and not trend_down
+
+// Trend Strength
+strong_trend = adx > adx_threshold
+weak_trend = adx <= adx_threshold
+
+// MA Crossover Signals
+golden_cross = ta.crossover(ma_fast_val, ma_medium_val) and trend_up
+death_cross = ta.crossunder(ma_fast_val, ma_medium_val) and trend_down
+
+// Trend Change Detection
+trend_change_up = not trend_up[1] and trend_up
+trend_change_down = not trend_down[1] and trend_down
+
+// === PLOTS ===
+// Moving Averages
+plot(ma_fast_val, "MA Rapide", color=color.blue, linewidth=2)
+plot(ma_medium_val, "MA Medium", color=color.orange, linewidth=2)
+plot(ma_slow_val, "MA Lente", color=color.red, linewidth=2)
+
+// Trend Signals
+if show_signals
+    plotshape(golden_cross, "Golden Cross", shape.triangleup, location.belowbar, color.green, size=size.normal)
+    plotshape(death_cross, "Death Cross", shape.triangledown, location.abovebar, color.red, size=size.normal)
+    plotshape(trend_change_up, "Trend Up", shape.circle, location.belowbar, color.lime, size=size.small)
+    plotshape(trend_change_down, "Trend Down", shape.circle, location.abovebar, color.fuchsia, size=size.small)
+
+// MA Cross Alerts
+if show_ma_cross
+    plotchar(ta.crossover(ma_fast_val, ma_medium_val), "Cross Up", "▲", location.belowbar, color.green, size=size.tiny)
+    plotchar(ta.crossunder(ma_fast_val, ma_medium_val), "Cross Down", "▼", location.abovebar, color.red, size=size.tiny)
+
+// Background Zones
+if show_zones
+    trend_color = trend_up and strong_trend ? color.new(color.green, 90) : 
+                  trend_down and strong_trend ? color.new(color.red, 90) : 
+                  trend_sideways ? color.new(color.gray, 95) : na
+    bgcolor(trend_color)
+
+// === TABLE FOR TREND INFO ===
+if barstate.islast
+    var table trend_table = table.new(position.bottom_right, 2, 6, bgcolor=color.white, border_width=1)
+    table.cell(trend_table, 0, 0, "Trend Analysis", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    table.cell(trend_table, 1, 0, "Status", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    
+    trend_status = trend_up ? "HAUSSIER" : trend_down ? "BAISSIER" : "LATERAL"
+    trend_strength = strong_trend ? "FORT" : "FAIBLE"
+    
+    table.cell(trend_table, 0, 1, "Direction", text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 1, 1, trend_status, text_color=trend_up ? color.green : trend_down ? color.red : color.orange, text_size=size.small)
+    table.cell(trend_table, 0, 2, "Force", text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 1, 2, trend_strength, text_color=strong_trend ? color.blue : color.gray, text_size=size.small)
+    table.cell(trend_table, 0, 3, "ADX", text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 1, 3, str.tostring(math.round(adx, 1)), text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 0, 4, "ATR", text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 1, 4, str.tostring(math.round(atr, 2)), text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 0, 5, "+DI/-DI", text_color=color.black, text_size=size.small)
+    table.cell(trend_table, 1, 5, str.tostring(math.round(diplus, 1)) + "/" + str.tostring(math.round(diminus, 1)), text_color=color.black, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(golden_cross, title="Golden Cross MNQ", message="Golden Cross détecté sur MNQ - Signal haussier fort")
+alertcondition(death_cross, title="Death Cross MNQ", message="Death Cross détecté sur MNQ - Signal baissier fort")
+alertcondition(trend_change_up, title="Trend Change Up MNQ", message="Changement de trend haussier sur MNQ")
+alertcondition(trend_change_down, title="Trend Change Down MNQ", message="Changement de trend baissier sur MNQ")

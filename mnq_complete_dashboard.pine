@@ -1,0 +1,216 @@
+//@version=5
+indicator("MNQ Complete Dashboard", shorttitle="MNQ_DASH", overlay=false)
+
+// === INPUTS ===
+// Dashboard Layout
+table_position = input.string("Top Right", "Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group="Display")
+table_size = input.string("Normal", "Table Size", options=["Small", "Normal", "Large"], group="Display")
+show_signals_only = input.bool(false, "Show Signals Only", group="Display")
+
+// Quick Settings Presets
+trading_style = input.string("Day Trading", "Trading Style", options=["Scalping", "Day Trading", "Swing Trading"], group="Presets")
+
+// === CALCULATIONS BASED ON PRESET ===
+// Adjust parameters based on trading style
+ema_fast = trading_style == "Scalping" ? 5 : trading_style == "Day Trading" ? 9 : 13
+ema_slow = trading_style == "Scalping" ? 13 : trading_style == "Day Trading" ? 21 : 34
+rsi_length = trading_style == "Scalping" ? 8 : trading_style == "Day Trading" ? 14 : 21
+volume_threshold = trading_style == "Scalping" ? 2.5 : trading_style == "Day Trading" ? 2.0 : 1.5
+
+// Core Calculations
+ema_fast_val = ta.ema(close, ema_fast)
+ema_slow_val = ta.ema(close, ema_slow)
+rsi = ta.rsi(close, rsi_length)
+atr = ta.atr(14)
+volume_ma = ta.sma(volume, 20)
+[macd_line, signal_line, macd_hist] = ta.macd(close, 12, 26, 9)
+
+// Trend Analysis
+trend_up = ema_fast_val > ema_slow_val
+trend_down = ema_fast_val < ema_slow_val
+trend_strength = math.abs(ema_fast_val - ema_slow_val) / ema_slow_val * 100
+
+// Momentum Analysis
+momentum_bullish = rsi < 30 and rsi > rsi[1]
+momentum_bearish = rsi > 70 and rsi < rsi[1]
+momentum_neutral = rsi >= 30 and rsi <= 70
+
+// Volume Analysis
+volume_spike = volume > volume_ma * volume_threshold
+volume_normal = volume >= volume_ma * 0.8 and volume <= volume_ma * 1.2
+volume_low = volume < volume_ma * 0.8
+
+// MACD Analysis
+macd_bullish = macd_line > signal_line and macd_line > 0
+macd_bearish = macd_line < signal_line and macd_line < 0
+macd_neutral = not macd_bullish and not macd_bearish
+
+// Support/Resistance (simplified)
+prev_day_high = request.security(syminfo.tickerid, "1D", high[1], lookahead=barmerge.lookahead_off)
+prev_day_low = request.security(syminfo.tickerid, "1D", low[1], lookahead=barmerge.lookahead_off)
+near_resistance = close > prev_day_high * 0.995
+near_support = close < prev_day_low * 1.005
+
+// === COMPOSITE SIGNALS ===
+// Overall Market Bias
+bullish_bias = trend_up and (momentum_bullish or momentum_neutral) and (macd_bullish or macd_neutral)
+bearish_bias = trend_down and (momentum_bearish or momentum_neutral) and (macd_bearish or macd_neutral)
+neutral_bias = not bullish_bias and not bearish_bias
+
+// Entry Signals
+strong_buy = bullish_bias and momentum_bullish and volume_spike and not near_resistance
+strong_sell = bearish_bias and momentum_bearish and volume_spike and not near_support
+weak_buy = bullish_bias and volume_normal and not near_resistance
+weak_sell = bearish_bias and volume_normal and not near_support
+
+// Risk Level Assessment
+risk_level = near_resistance or near_support ? "HIGH" : volume_low ? "MEDIUM" : "LOW"
+risk_color = risk_level == "HIGH" ? color.red : risk_level == "MEDIUM" ? color.orange : color.green
+
+// Market Condition
+market_condition = volume_spike and (strong_buy or strong_sell) ? "BREAKOUT" :
+                  trend_strength < 0.5 ? "CONSOLIDATION" :
+                  trend_strength > 2.0 ? "TRENDING" : "NORMAL"
+
+// === DASHBOARD TABLE ===
+get_table_position() =>
+    switch table_position
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+get_table_size() =>
+    switch table_size
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        => size.normal
+
+if barstate.islast and not show_signals_only
+    var table dashboard = table.new(get_table_position(), 2, 15, bgcolor=color.white, border_width=1)
+    
+    text_size = get_table_size()
+    
+    // Header
+    table.cell(dashboard, 0, 0, "MNQ DASHBOARD", text_color=color.white, text_size=text_size, bgcolor=color.navy)
+    table.cell(dashboard, 1, 0, trading_style, text_color=color.white, text_size=text_size, bgcolor=color.navy)
+    
+    // Overall Bias
+    table.cell(dashboard, 0, 1, "BIAS", text_color=color.black, text_size=text_size, bgcolor=color.gray)
+    bias_text = bullish_bias ? "BULLISH" : bearish_bias ? "BEARISH" : "NEUTRAL"
+    bias_color = bullish_bias ? color.green : bearish_bias ? color.red : color.orange
+    table.cell(dashboard, 1, 1, bias_text, text_color=bias_color, text_size=text_size)
+    
+    // Market Condition
+    table.cell(dashboard, 0, 2, "CONDITION", text_color=color.black, text_size=text_size)
+    condition_color = market_condition == "BREAKOUT" ? color.blue : 
+                     market_condition == "TRENDING" ? color.green :
+                     market_condition == "CONSOLIDATION" ? color.orange : color.gray
+    table.cell(dashboard, 1, 2, market_condition, text_color=condition_color, text_size=text_size)
+    
+    // Risk Level
+    table.cell(dashboard, 0, 3, "RISK", text_color=color.black, text_size=text_size)
+    table.cell(dashboard, 1, 3, risk_level, text_color=risk_color, text_size=text_size)
+    
+    // Separator
+    table.cell(dashboard, 0, 4, "ANALYSIS", text_color=color.white, text_size=text_size, bgcolor=color.gray)
+    table.cell(dashboard, 1, 4, "VALUE", text_color=color.white, text_size=text_size, bgcolor=color.gray)
+    
+    // Trend
+    table.cell(dashboard, 0, 5, "Trend", text_color=color.black, text_size=text_size)
+    trend_text = trend_up ? "UP" : trend_down ? "DOWN" : "SIDEWAYS"
+    trend_color = trend_up ? color.green : trend_down ? color.red : color.gray
+    table.cell(dashboard, 1, 5, trend_text, text_color=trend_color, text_size=text_size)
+    
+    // Trend Strength
+    table.cell(dashboard, 0, 6, "Strength", text_color=color.black, text_size=text_size)
+    strength_text = trend_strength > 2.0 ? "STRONG" : trend_strength > 0.5 ? "MEDIUM" : "WEAK"
+    strength_color = trend_strength > 2.0 ? color.blue : trend_strength > 0.5 ? color.orange : color.gray
+    table.cell(dashboard, 1, 6, strength_text + " (" + str.tostring(math.round(trend_strength, 1)) + "%)", text_color=strength_color, text_size=text_size)
+    
+    // RSI
+    table.cell(dashboard, 0, 7, "RSI", text_color=color.black, text_size=text_size)
+    rsi_color = rsi > 70 ? color.red : rsi < 30 ? color.green : color.black
+    table.cell(dashboard, 1, 7, str.tostring(math.round(rsi, 1)), text_color=rsi_color, text_size=text_size)
+    
+    // MACD
+    table.cell(dashboard, 0, 8, "MACD", text_color=color.black, text_size=text_size)
+    macd_status = macd_bullish ? "BULL" : macd_bearish ? "BEAR" : "NEUTRAL"
+    macd_color = macd_bullish ? color.green : macd_bearish ? color.red : color.gray
+    table.cell(dashboard, 1, 8, macd_status, text_color=macd_color, text_size=text_size)
+    
+    // Volume
+    table.cell(dashboard, 0, 9, "Volume", text_color=color.black, text_size=text_size)
+    volume_ratio = volume / volume_ma
+    volume_status = volume_spike ? "SPIKE" : volume_normal ? "NORMAL" : "LOW"
+    volume_color = volume_spike ? color.red : volume_normal ? color.blue : color.gray
+    table.cell(dashboard, 1, 9, volume_status + " (" + str.tostring(math.round(volume_ratio, 1)) + "x)", text_color=volume_color, text_size=text_size)
+    
+    // ATR
+    table.cell(dashboard, 0, 10, "ATR", text_color=color.black, text_size=text_size)
+    table.cell(dashboard, 1, 10, str.tostring(math.round(atr, 2)), text_color=color.black, text_size=text_size)
+    
+    // Key Levels
+    table.cell(dashboard, 0, 11, "LEVELS", text_color=color.white, text_size=text_size, bgcolor=color.gray)
+    table.cell(dashboard, 1, 11, "DISTANCE", text_color=color.white, text_size=text_size, bgcolor=color.gray)
+    
+    // Previous Day High
+    table.cell(dashboard, 0, 12, "PDH", text_color=color.black, text_size=text_size)
+    pdh_distance = ((prev_day_high - close) / close) * 100
+    pdh_color = pdh_distance < 1 ? color.red : color.black
+    table.cell(dashboard, 1, 12, str.tostring(math.round(pdh_distance, 2)) + "%", text_color=pdh_color, text_size=text_size)
+    
+    // Previous Day Low
+    table.cell(dashboard, 0, 13, "PDL", text_color=color.black, text_size=text_size)
+    pdl_distance = ((close - prev_day_low) / close) * 100
+    pdl_color = pdl_distance < 1 ? color.green : color.black
+    table.cell(dashboard, 1, 13, str.tostring(math.round(pdl_distance, 2)) + "%", text_color=pdl_color, text_size=text_size)
+    
+    // Current Price
+    table.cell(dashboard, 0, 14, "PRICE", text_color=color.black, text_size=text_size)
+    table.cell(dashboard, 1, 14, str.tostring(close), text_color=color.blue, text_size=text_size)
+
+// === SIGNAL PLOTS ===
+// Main signals
+plotshape(strong_buy, "Strong Buy", shape.triangleup, location.bottom, color.lime, size=size.large)
+plotshape(strong_sell, "Strong Sell", shape.triangledown, location.top, color.red, size=size.large)
+plotshape(weak_buy, "Weak Buy", shape.circle, location.bottom, color.green, size=size.small)
+plotshape(weak_sell, "Weak Sell", shape.circle, location.top, color.maroon, size=size.small)
+
+// Background conditions
+signal_bg = strong_buy ? color.new(color.green, 90) : 
+           strong_sell ? color.new(color.red, 90) :
+           weak_buy ? color.new(color.green, 95) :
+           weak_sell ? color.new(color.red, 95) : na
+bgcolor(signal_bg)
+
+// === QUICK REFERENCE ===
+if barstate.islast and show_signals_only
+    var table signals = table.new(get_table_position(), 1, 6, bgcolor=color.white, border_width=1)
+    
+    table.cell(signals, 0, 0, "SIGNALS", text_color=color.white, text_size=size.normal, bgcolor=color.navy)
+    
+    // Current signal
+    current_signal = strong_buy ? "🟢 STRONG BUY" :
+                    strong_sell ? "🔴 STRONG SELL" :
+                    weak_buy ? "🟡 WEAK BUY" :
+                    weak_sell ? "🟡 WEAK SELL" : "⚪ NO SIGNAL"
+    
+    signal_color = strong_buy or weak_buy ? color.green : 
+                  strong_sell or weak_sell ? color.red : color.gray
+    
+    table.cell(signals, 0, 1, current_signal, text_color=signal_color, text_size=size.normal)
+    table.cell(signals, 0, 2, "Risk: " + risk_level, text_color=risk_color, text_size=size.small)
+    table.cell(signals, 0, 3, "Bias: " + bias_text, text_color=bias_color, text_size=size.small)
+    table.cell(signals, 0, 4, market_condition, text_color=condition_color, text_size=size.small)
+    table.cell(signals, 0, 5, "RSI: " + str.tostring(math.round(rsi, 0)), text_color=rsi_color, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(strong_buy, title="MNQ Strong Buy Signal", message="🟢 SIGNAL ACHAT FORT sur MNQ - Toutes conditions réunies")
+alertcondition(strong_sell, title="MNQ Strong Sell Signal", message="🔴 SIGNAL VENTE FORT sur MNQ - Toutes conditions réunies")
+alertcondition(weak_buy, title="MNQ Weak Buy Signal", message="🟡 Signal achat faible sur MNQ - Prudence recommandée")
+alertcondition(weak_sell, title="MNQ Weak Sell Signal", message="🟡 Signal vente faible sur MNQ - Prudence recommandée")
+alertcondition(market_condition == "BREAKOUT", title="MNQ Breakout Condition", message="💥 Condition de breakout détectée sur MNQ")
+alertcondition(risk_level == "HIGH", title="MNQ High Risk", message="⚠️ Niveau de risque élevé sur MNQ - Proche de niveaux clés")
