@@ -1,0 +1,103 @@
+//@version=5
+strategy("MNQ Trading Strategy", shorttitle="MNQ_STRAT", overlay=true, initial_capital=50000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.per_trade, commission_value=2.4)
+
+// === INPUTS ===
+// Trend Analysis
+ema_fast = input.int(9, "EMA Rapide", minval=1, maxval=100, group="Trend Analysis")
+ema_slow = input.int(21, "EMA Lente", minval=1, maxval=200, group="Trend Analysis")
+atr_length = input.int(14, "ATR Period", minval=1, maxval=50, group="Trend Analysis")
+atr_multiplier = input.float(2.0, "ATR Multiplier", minval=0.5, maxval=5.0, step=0.1, group="Trend Analysis")
+
+// RSI Settings
+rsi_length = input.int(14, "RSI Period", minval=1, maxval=50, group="Momentum")
+rsi_oversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="Momentum")
+rsi_overbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="Momentum")
+
+// Volume Analysis
+volume_sma_length = input.int(20, "Volume SMA Period", minval=5, maxval=100, group="Volume")
+volume_multiplier = input.float(1.5, "Volume Spike Multiplier", minval=1.0, maxval=3.0, step=0.1, group="Volume")
+
+// Risk Management
+stop_loss_atr = input.float(2.0, "Stop Loss (ATR)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+take_profit_atr = input.float(3.0, "Take Profit (ATR)", minval=1.0, maxval=10.0, step=0.1, group="Risk Management")
+max_trades_per_day = input.int(3, "Max Trades Per Day", minval=1, maxval=10, group="Risk Management")
+
+// Time Filter
+use_time_filter = input.bool(true, "Use Time Filter", group="Session")
+start_hour = input.int(9, "Start Hour (EST)", minval=0, maxval=23, group="Session")
+end_hour = input.int(16, "End Hour (EST)", minval=0, maxval=23, group="Session")
+
+// === CALCULATIONS ===
+// EMAs
+ema_fast_val = ta.ema(close, ema_fast)
+ema_slow_val = ta.ema(close, ema_slow)
+
+// ATR for volatility
+atr = ta.atr(atr_length)
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+
+// Volume Analysis
+volume_sma = ta.sma(volume, volume_sma_length)
+volume_spike = volume > volume_sma * volume_multiplier
+
+// Time Filter
+current_hour = hour(time, "America/New_York")
+in_session = not use_time_filter or (current_hour >= start_hour and current_hour <= end_hour)
+
+// Daily Trade Counter
+var int trades_today = 0
+if dayofweek != dayofweek[1]
+    trades_today := 0
+
+// === SIGNAL LOGIC ===
+// Trend Conditions
+trend_up = ema_fast_val > ema_slow_val
+trend_down = ema_fast_val < ema_slow_val
+
+// Momentum Conditions
+momentum_bullish = rsi < rsi_oversold and rsi > rsi[1]
+momentum_bearish = rsi > rsi_overbought and rsi < rsi[1]
+
+// Entry Conditions
+long_condition = trend_up and momentum_bullish and volume_spike and in_session and trades_today < max_trades_per_day
+short_condition = trend_down and momentum_bearish and volume_spike and in_session and trades_today < max_trades_per_day
+
+// === STRATEGY EXECUTION ===
+if long_condition and strategy.position_size == 0
+    stop_price = close - (atr * stop_loss_atr)
+    target_price = close + (atr * take_profit_atr)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=stop_price, limit=target_price)
+    trades_today := trades_today + 1
+
+if short_condition and strategy.position_size == 0
+    stop_price = close + (atr * stop_loss_atr)
+    target_price = close - (atr * take_profit_atr)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=stop_price, limit=target_price)
+    trades_today := trades_today + 1
+
+// === PLOTS ===
+plot(ema_fast_val, "EMA Rapide", color=color.blue, linewidth=2)
+plot(ema_slow_val, "EMA Lente", color=color.red, linewidth=2)
+
+// Entry Signals
+plotshape(long_condition, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_condition, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Background color for trend
+bgcolor(trend_up ? color.new(color.green, 95) : trend_down ? color.new(color.red, 95) : na)
+
+// === TABLE FOR STATS ===
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 4, bgcolor=color.white, border_width=1)
+    table.cell(info_table, 0, 0, "Metric", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 0, "Value", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 0, 1, "Trades Today", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 1, str.tostring(trades_today), text_color=color.black, text_size=size.small)
+    table.cell(info_table, 0, 2, "Current RSI", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 2, str.tostring(math.round(rsi, 2)), text_color=color.black, text_size=size.small)
+    table.cell(info_table, 0, 3, "ATR", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 3, str.tostring(math.round(atr, 2)), text_color=color.black, text_size=size.small)

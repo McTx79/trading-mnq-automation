@@ -1,0 +1,57 @@
+# OS and IDE files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Log files
+*.log
+*.logs
+
+# Build and distribution
+build/
+dist/
+out/
+
+# Node modules (if any JS tools used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if any Python tools used)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# TradingView Pine Script specific
+*.tv
+*.pinescript.bak
+
+# Documentation drafts
+draft/
+drafts/
+*.draft
+
+# Personal notes and configs
+personal/
+config.personal.*
+notes.txt
+todo.txt
