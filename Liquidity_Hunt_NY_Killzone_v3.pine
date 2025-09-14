@@ -1,0 +1,126 @@
+// @version=5
+strategy("Stratégie Chasse à la Liquidité v3 (NY Killzone)", 
+         overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=100,
+         commission_value=0.01,
+         commission_type=strategy.commission.percent,
+         process_orders_on_close=true)
+
+// =============================================================================
+// INPUTS & PARAMÈTRES
+// =============================================================================
+// -- Sessions --
+inp_london_start_hour = input.int(3, "Heure début Londres (NY Time)", group="Sessions")
+inp_london_end_hour   = input.int(8, "Heure fin Londres (NY Time)", group="Sessions")
+inp_ny_killzone_start_hour = input.int(9, "Heure début Killzone NY", group="Sessions")
+inp_ny_killzone_start_min  = input.int(30, "Minute début Killzone NY", group="Sessions")
+inp_ny_killzone_end_hour   = input.int(10, "Heure fin Killzone NY", group="Sessions")
+inp_ny_killzone_end_min    = input.int(30, "Minute fin Killzone NY", group="Sessions")
+
+// -- Risk Management --
+inp_risk_reward_ratio = input.float(3.0, "Ratio Risque/Récompense (TP)", group="Risk Management")
+inp_risk_percent = input.float(0.5, "Risque par Trade (%)", group="Risk Management")
+
+// -- Confirmations --
+inp_use_invalidation = input.bool(true, "Utiliser Invalidation FVG comme confirmation ?", group="Confirmations")
+inp_use_new_fvg = input.bool(true, "Utiliser Nouveau FVG comme confirmation ?", group="Confirmations")
+
+// =============================================================================
+// DÉFINITION DES SESSIONS ET LIQUIDITÉS
+// =============================================================================
+
+// -- Killzone de New York (fonction pour vérifier si on est dans la plage horaire) --
+is_in_ny_killzone() =>
+    (hour == inp_ny_killzone_start_hour and minute >= inp_ny_killzone_start_min) or 
+    (hour > inp_ny_killzone_start_hour and hour < inp_ny_killzone_end_hour) or
+    (hour == inp_ny_killzone_end_hour and minute <= inp_ny_killzone_end_min)
+
+// -- Récupération des niveaux de liquidité Daily --
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// -- Calcul précis de la session de Londres --
+var float london_high = na
+var float london_low = na
+is_london_session = hour >= inp_london_start_hour and hour < inp_london_end_hour
+
+if is_london_session and not is_london_session[1] // Première bougie de la session
+    london_high := high
+    london_low := low
+else if is_london_session
+    london_high := math.max(london_high, high)
+    london_low := math.min(london_low, low)
+
+// -- Plot des liquidités sur le graphique --
+plot(pdh, "Previous Day High", color=color.new(color.blue, 0), style=plot.style_linebr)
+plot(pdl, "Previous Day Low", color=color.new(color.maroon, 0), style=plot.style_linebr)
+plot(london_high, "London Session High", color=color.new(color.orange, 25), style=plot.style_linebr)
+plot(london_low, "London Session Low", color=color.new(color.purple, 25), style=plot.style_linebr)
+
+// =============================================================================
+// LOGIQUE DE CONFIRMATION (M5)
+// =============================================================================
+
+// -- Détection des Fair Value Gaps (FVG) --
+is_bearish_fvg = low[2] > high[1] // FVG Haussier (vide vers le haut)
+is_bullish_fvg = high[2] < low[1] // FVG Baissier (vide vers le bas)
+
+// -- Suivi de la prise de liquidité --
+var bool liquidity_high_taken = false
+var bool liquidity_low_taken = false
+
+if is_in_ny_killzone() and not is_in_ny_killzone()[1] // Reset au début de la Killzone
+    liquidity_high_taken := false
+    liquidity_low_taken := false
+
+if is_in_ny_killzone() // Détection durant la Killzone
+    if high > pdh or high > london_high
+        liquidity_high_taken := true
+    if low < pdl or low < london_low
+        liquidity_low_taken := true
+
+// -- Conditions de confirmation M5 --
+// Confirmation VENTE (après prise de liquidité HAUTE)
+short_confirmation_invalidation = is_bullish_fvg[1] and close < low[1]
+short_confirmation_new_fvg = is_bearish_fvg
+short_entry_signal = is_in_ny_killzone() and liquidity_high_taken and ( (inp_use_invalidation and short_confirmation_invalidation) or (inp_use_new_fvg and short_confirmation_new_fvg) )
+
+// Confirmation ACHAT (après prise de liquidité BASSE)
+long_confirmation_invalidation = is_bearish_fvg[1] and close > high[1]
+long_confirmation_new_fvg = is_bullish_fvg
+long_entry_signal = is_in_ny_killzone() and liquidity_low_taken and ( (inp_use_invalidation and long_confirmation_invalidation) or (inp_use_new_fvg and long_confirmation_new_fvg) )
+
+// =============================================================================
+// STRATÉGIE D'ENTRÉE ET DE SORTIE
+// =============================================================================
+var bool trade_taken_today = false
+if (dayofmonth != dayofmonth[1])
+    trade_taken_today := false
+
+if (long_entry_signal and not trade_taken_today)
+    stop_loss_price = low[2] < low[1] ? low[2] : low[1] // SL sous la structure de confirmation
+    risk_per_contract = (close - stop_loss_price)
+    position_size = (strategy.equity * inp_risk_percent / 100) / risk_per_contract
+    
+    strategy.entry("Achat", strategy.long, qty=position_size)
+    strategy.exit("Sortie Achat", "Achat", stop=stop_loss_price, limit=close + risk_per_contract * inp_risk_reward_ratio)
+    trade_taken_today := true
+
+if (short_entry_signal and not trade_taken_today)
+    stop_loss_price := high[2] > high[1] ? high[2] : high[1] // SL au-dessus de la structure
+    risk_per_contract = (stop_loss_price - close)
+    position_size = (strategy.equity * inp_risk_percent / 100) / risk_per_contract
+
+    strategy.entry("Vente", strategy.short, qty=position_size)
+    strategy.exit("Sortie Vente", "Vente", stop=stop_loss_price, limit=close - risk_per_contract * inp_risk_reward_ratio)
+    trade_taken_today := true
+
+// =============================================================================
+// PLOTS VISUELS
+// =============================================================================
+plotshape(long_entry_signal and not trade_taken_today, "Signal Achat", shape.labelup, location.belowbar, color.new(color.green, 25), text="BUY", textcolor=color.white, size=size.small)
+plotshape(short_entry_signal and not trade_taken_today, "Signal Vente", shape.labeldown, location.abovebar, color.new(color.red, 25), text="SELL", textcolor=color.white, size=size.small)
+
+// Colore le fond pendant la Killzone pour une meilleure visibilité
+bgcolor(is_in_ny_killzone() ? color.new(color.blue, 90) : na)
