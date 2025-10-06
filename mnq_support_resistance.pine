@@ -1,0 +1,266 @@
+//@version=5
+indicator("MNQ Support & Resistance", shorttitle="MNQ_SR", overlay=true)
+
+// === INPUTS ===
+// Pivot Points
+pivot_left_bars = input.int(10, "Pivot Left Bars", minval=1, maxval=50, group="Pivot Points")
+pivot_right_bars = input.int(10, "Pivot Right Bars", minval=1, maxval=50, group="Pivot Points")
+pivot_strength = input.int(3, "Pivot Strength", minval=1, maxval=10, group="Pivot Points")
+
+// Support/Resistance Zones
+zone_width = input.float(0.1, "Zone Width %", minval=0.01, maxval=1.0, step=0.01, group="S/R Zones")
+min_touches = input.int(2, "Minimum Touches", minval=2, maxval=10, group="S/R Zones")
+lookback_periods = input.int(100, "Lookback Periods", minval=50, maxval=500, group="S/R Zones")
+
+// Fibonacci Levels
+show_fib = input.bool(true, "Show Fibonacci", group="Fibonacci")
+fib_lookback = input.int(50, "Fibonacci Lookback", minval=20, maxval=200, group="Fibonacci")
+
+// Session Levels
+show_session_levels = input.bool(true, "Show Session Levels", group="Session")
+session_start_hour = input.int(9, "Session Start (EST)", minval=0, maxval=23, group="Session")
+session_end_hour = input.int(16, "Session End (EST)", minval=0, maxval=23, group="Session")
+
+// Previous Day Levels
+show_prev_day = input.bool(true, "Show Previous Day", group="Previous Day")
+show_weekly_levels = input.bool(true, "Show Weekly Levels", group="Weekly")
+
+// Display Options
+max_lines = input.int(20, "Max Lines", minval=5, maxval=50, group="Display")
+extend_lines = input.bool(true, "Extend Lines", group="Display")
+show_breaks = input.bool(true, "Show Breaks", group="Display")
+
+// === FUNCTIONS ===
+// Function to check if price is near a level
+is_near_level(price, level, tolerance) =>
+    math.abs(price - level) <= level * tolerance / 100
+
+// Function to count touches
+count_touches(level, tolerance, lookback) =>
+    touches = 0
+    for i = 1 to lookback
+        if is_near_level(high[i], level, tolerance) or is_near_level(low[i], level, tolerance)
+            touches := touches + 1
+        if touches >= min_touches
+            break
+    touches
+
+// === CALCULATIONS ===
+// Pivot High and Low Detection
+pivot_high = ta.pivothigh(high, pivot_left_bars, pivot_right_bars)
+pivot_low = ta.pivotlow(low, pivot_left_bars, pivot_right_bars)
+
+// Previous Day Levels
+prev_day_high = request.security(syminfo.tickerid, "1D", high[1], lookahead=barmerge.lookahead_off)
+prev_day_low = request.security(syminfo.tickerid, "1D", low[1], lookahead=barmerge.lookahead_off)
+prev_day_close = request.security(syminfo.tickerid, "1D", close[1], lookahead=barmerge.lookahead_off)
+
+// Weekly Levels
+weekly_high = request.security(syminfo.tickerid, "1W", high[1], lookahead=barmerge.lookahead_off)
+weekly_low = request.security(syminfo.tickerid, "1W", low[1], lookahead=barmerge.lookahead_off)
+weekly_close = request.security(syminfo.tickerid, "1W", close[1], lookahead=barmerge.lookahead_off)
+
+// Session High/Low
+var float session_high = na
+var float session_low = na
+current_hour = hour(time, "America/New_York")
+
+if current_hour == session_start_hour and current_hour != current_hour[1]
+    session_high := high
+    session_low := low
+else if not na(session_high) and not na(session_low)
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+
+// Fibonacci Levels
+highest_price = ta.highest(high, fib_lookback)
+lowest_price = ta.lowest(low, fib_lookback)
+fib_range = highest_price - lowest_price
+
+fib_236 = highest_price - fib_range * 0.236
+fib_382 = highest_price - fib_range * 0.382
+fib_500 = highest_price - fib_range * 0.500
+fib_618 = highest_price - fib_range * 0.618
+fib_786 = highest_price - fib_range * 0.786
+
+// Key Level Arrays
+var line[] resistance_lines = array.new<line>()
+var line[] support_lines = array.new<line>()
+var level_data = array.new<float>()
+
+// Store significant levels
+if not na(pivot_high)
+    touches = count_touches(pivot_high, zone_width, lookback_periods)
+    if touches >= min_touches
+        array.push(level_data, pivot_high)
+
+if not na(pivot_low)
+    touches = count_touches(pivot_low, zone_width, lookback_periods)
+    if touches >= min_touches
+        array.push(level_data, pivot_low)
+
+// === LEVEL BREAKS ===
+// Track level breaks
+var float last_broken_resistance = na
+var float last_broken_support = na
+var bool resistance_broken = false
+var bool support_broken = false
+
+// Check for breaks of significant levels
+for i = 0 to math.min(array.size(level_data) - 1, max_lines - 1)
+    level = array.get(level_data, i)
+    if close > level and close[1] <= level and high > level
+        last_broken_resistance := level
+        resistance_broken := true
+    else if close < level and close[1] >= level and low < level
+        last_broken_support := level
+        support_broken := true
+
+// === PLOTS ===
+// Previous Day Levels
+if show_prev_day
+    plot(prev_day_high, "Prev Day High", color=color.red, linewidth=2, style=plot.style_stepline)
+    plot(prev_day_low, "Prev Day Low", color=color.green, linewidth=2, style=plot.style_stepline)
+    plot(prev_day_close, "Prev Day Close", color=color.blue, linewidth=1, style=plot.style_stepline)
+
+// Weekly Levels
+if show_weekly_levels
+    plot(weekly_high, "Weekly High", color=color.maroon, linewidth=2, style=plot.style_stepline)
+    plot(weekly_low, "Weekly Low", color=color.lime, linewidth=2, style=plot.style_stepline)
+    plot(weekly_close, "Weekly Close", color=color.navy, linewidth=1, style=plot.style_stepline)
+
+// Session Levels
+if show_session_levels and not na(session_high) and not na(session_low)
+    plot(session_high, "Session High", color=color.orange, linewidth=1, style=plot.style_stepline)
+    plot(session_low, "Session Low", color=color.yellow, linewidth=1, style=plot.style_stepline)
+
+// Fibonacci Levels
+if show_fib
+    plot(fib_236, "Fib 23.6%", color=color.new(color.purple, 50), linewidth=1)
+    plot(fib_382, "Fib 38.2%", color=color.new(color.purple, 30), linewidth=1)
+    plot(fib_500, "Fib 50%", color=color.purple, linewidth=2)
+    plot(fib_618, "Fib 61.8%", color=color.new(color.purple, 30), linewidth=1)
+    plot(fib_786, "Fib 78.6%", color=color.new(color.purple, 50), linewidth=1)
+
+// Pivot Points
+plotshape(pivot_high, "Pivot High", shape.triangledown, location.abovebar, color.red, size=size.tiny)
+plotshape(pivot_low, "Pivot Low", shape.triangleup, location.belowbar, color.green, size=size.tiny)
+
+// Level Breaks
+if show_breaks
+    plotshape(resistance_broken, "Resistance Break", shape.breakout, location.belowbar, color.lime, size=size.small)
+    plotshape(support_broken, "Support Break", shape.breakdown, location.abovebar, color.red, size=size.small)
+
+// === DYNAMIC SUPPORT AND RESISTANCE ===
+// Current price relationship to levels
+var string current_zone = "No Zone"
+var color zone_color = color.gray
+
+// Check current price position relative to key levels
+if not na(prev_day_high) and close > prev_day_high
+    current_zone := "Above PDH"
+    zone_color := color.green
+else if not na(prev_day_low) and close < prev_day_low
+    current_zone := "Below PDL"
+    zone_color := color.red
+else if not na(session_high) and close > session_high * 0.99
+    current_zone := "Near Session High"
+    zone_color := color.orange
+else if not na(session_low) and close < session_low * 1.01
+    current_zone := "Near Session Low"
+    zone_color := color.yellow
+else
+    current_zone := "Range"
+    zone_color := color.gray
+
+// Background color for zones
+bgcolor(color.new(zone_color, 95))
+
+// === CONFLUENCE DETECTION ===
+// Check for level confluence (multiple levels close together)
+confluence_tolerance = close * 0.002  // 0.2% tolerance
+
+var bool confluence_zone = false
+confluence_count = 0
+
+// Count nearby levels
+if not na(prev_day_high) and math.abs(close - prev_day_high) <= confluence_tolerance
+    confluence_count := confluence_count + 1
+if not na(prev_day_low) and math.abs(close - prev_day_low) <= confluence_tolerance
+    confluence_count := confluence_count + 1
+if not na(session_high) and math.abs(close - session_high) <= confluence_tolerance
+    confluence_count := confluence_count + 1
+if not na(session_low) and math.abs(close - session_low) <= confluence_tolerance
+    confluence_count := confluence_count + 1
+if show_fib and math.abs(close - fib_500) <= confluence_tolerance
+    confluence_count := confluence_count + 1
+
+confluence_zone := confluence_count >= 2
+
+// === INFORMATION TABLE ===
+if barstate.islast
+    var table sr_table = table.new(position.bottom_left, 2, 12, bgcolor=color.white, border_width=1)
+    table.cell(sr_table, 0, 0, "S/R Analysis", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    table.cell(sr_table, 1, 0, "Level", text_color=color.black, text_size=size.small, bgcolor=color.gray)
+    
+    // Current Zone
+    table.cell(sr_table, 0, 1, "Current Zone", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 1, current_zone, text_color=zone_color, text_size=size.small)
+    
+    // Key Levels
+    table.cell(sr_table, 0, 2, "Prev Day High", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 2, str.tostring(prev_day_high), text_color=color.red, text_size=size.small)
+    
+    table.cell(sr_table, 0, 3, "Prev Day Low", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 3, str.tostring(prev_day_low), text_color=color.green, text_size=size.small)
+    
+    table.cell(sr_table, 0, 4, "Session High", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 4, not na(session_high) ? str.tostring(session_high) : "N/A", text_color=color.orange, text_size=size.small)
+    
+    table.cell(sr_table, 0, 5, "Session Low", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 5, not na(session_low) ? str.tostring(session_low) : "N/A", text_color=color.yellow, text_size=size.small)
+    
+    // Weekly Levels
+    table.cell(sr_table, 0, 6, "Weekly High", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 6, str.tostring(weekly_high), text_color=color.maroon, text_size=size.small)
+    
+    table.cell(sr_table, 0, 7, "Weekly Low", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 7, str.tostring(weekly_low), text_color=color.lime, text_size=size.small)
+    
+    // Fibonacci Key Level
+    table.cell(sr_table, 0, 8, "Fib 50%", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 8, str.tostring(math.round(fib_500, 2)), text_color=color.purple, text_size=size.small)
+    
+    // Distance to nearest level
+    nearest_resistance = math.min(
+        prev_day_high > close ? prev_day_high : 99999,
+        session_high > close and not na(session_high) ? session_high : 99999
+    )
+    nearest_support = math.max(
+        prev_day_low < close ? prev_day_low : 0,
+        session_low < close and not na(session_low) ? session_low : 0
+    )
+    
+    resistance_distance = nearest_resistance < 99999 ? ((nearest_resistance - close) / close) * 100 : na
+    support_distance = nearest_support > 0 ? ((close - nearest_support) / close) * 100 : na
+    
+    table.cell(sr_table, 0, 9, "Nearest R", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 9, not na(resistance_distance) ? str.tostring(math.round(resistance_distance, 2)) + "%" : "N/A", text_color=color.red, text_size=size.small)
+    
+    table.cell(sr_table, 0, 10, "Nearest S", text_color=color.black, text_size=size.small)
+    table.cell(sr_table, 1, 10, not na(support_distance) ? str.tostring(math.round(support_distance, 2)) + "%" : "N/A", text_color=color.green, text_size=size.small)
+    
+    // Confluence
+    table.cell(sr_table, 0, 11, "Confluence", text_color=color.black, text_size=size.small)
+    confluence_text = confluence_zone ? "YES (" + str.tostring(confluence_count) + ")" : "NO"
+    confluence_color = confluence_zone ? color.blue : color.gray
+    table.cell(sr_table, 1, 11, confluence_text, text_color=confluence_color, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(resistance_broken, title="MNQ Resistance Break", message="Résistance cassée sur MNQ - Breakout potentiel")
+alertcondition(support_broken, title="MNQ Support Break", message="Support cassé sur MNQ - Breakdown potentiel")
+alertcondition(confluence_zone, title="MNQ Confluence Zone", message="Zone de confluence détectée sur MNQ")
+alertcondition(close > prev_day_high, title="MNQ Above PDH", message="MNQ au dessus du plus haut de la veille")
+alertcondition(close < prev_day_low, title="MNQ Below PDL", message="MNQ en dessous du plus bas de la veille")
+alertcondition(not na(pivot_high), title="MNQ Pivot High", message="Nouveau pivot haut formé sur MNQ")
+alertcondition(not na(pivot_low), title="MNQ Pivot Low", message="Nouveau pivot bas formé sur MNQ")
